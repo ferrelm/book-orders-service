@@ -1,0 +1,10 @@
+replicaCount: 1
+image:
+  repository: book-orders-service
+  tag: latest
+  pullPolicy: IfNotPresent
+service:
+  type: ClusterIP
+  port: 8080
+env:
+  MONGO_URI: mongodb://mongo:27017/bookorders

@@ -1,0 +1,4 @@
+apiVersion: v2
+name: book-orders-service
+version: 0.1.0
+appVersion: "0.0.1"
