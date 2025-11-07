@@ -3,6 +3,10 @@ package com.example.bookorders.controller;
 import com.example.bookorders.model.Order;
 import com.example.bookorders.service.OrderService;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
+
+import java.net.URI;
 import java.util.List;
 
 @RestController
@@ -20,7 +24,15 @@ public class OrderController {
     }
 
     @PostMapping
-    public Order createOrder(@RequestBody Order order) {
-        return service.createOrder(order);
+    public ResponseEntity<Order> createOrder(@RequestBody Order order) {
+        Order created = service.createOrder(order);
+
+        // Build Location: /api/orders/{id}
+        URI location = ServletUriComponentsBuilder.fromCurrentRequest()
+                .path("/{id}")
+                .buildAndExpand(created.getId())
+                .toUri();
+
+        return ResponseEntity.created(location).body(created);
     }
 }

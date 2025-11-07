@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  mongo:
+    image: mongo:6.0
+    container_name: bookorders-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      # Use mongosh for newer Mongo images (mongo shell binary removed in recent versions)
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand({ping:1})", "--quiet"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bookorders-app
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # app will connect to the mongo service by hostname 'mongo'
+      SPRING_DATA_MONGODB_URI: mongodb://mongo:27017/bookorders
+      # run app with the dev profile by default; allow overriding via environment
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
+      # keep same JWT issuer as default app config; change as needed
+      SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI: https://cognito-idp.fake-region.amazonaws.com/fake-pool
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+volumes:
+  mongo-data:

@@ -1,0 +1,81 @@
+{
+  "info": {
+    "name": "Book Orders Service",
+    "_postman_id": "book-orders-service-collection",
+    "description": "Collection with basic API and actuator requests for the Book Orders Service (local dev). Uses the `Local Dev` environment.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Get Orders",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{devToken}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/orders",
+          "host": ["{{baseUrl}}"],
+          "path": ["api","orders"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Create Order",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{devToken}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"customerName\": \"Alice\",\n  \"bookTitle\": \"1984\",\n  \"quantity\": 1,\n  \"status\": \"NEW\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/orders",
+          "host": ["{{baseUrl}}"],
+          "path": ["api","orders"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Actuator - Health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/actuator/health",
+          "host": ["{{baseUrl}}"],
+          "path": ["actuator","health"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Actuator - Root",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/actuator",
+          "host": ["{{baseUrl}}"],
+          "path": ["actuator"]
+        }
+      },
+      "response": []
+    }
+  ]
+}

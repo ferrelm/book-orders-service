@@ -1,0 +1,10 @@
+management:
+  endpoints:
+    web:
+      exposure:
+        # Expose all actuator endpoints in the local 'dev' profile for easy debugging.
+        # Use with caution: do NOT enable this in production.
+        include: '*'
+  endpoint:
+    health:
+      show-details: always
