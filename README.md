@@ -197,3 +197,32 @@ make docker-up-profile PROFILE=prod
 
 Keep `dev` as the default in the compose file to make local development frictionless, but always review what each profile enables before using it in shared or CI environments.
 
+Datadog (optional)
+------------------
+
+If you want to enable the Datadog Java agent for local testing or profiling, add the agent to your image and pass the JVM arg when starting the container. Example Dockerfile snippet (do NOT include the agent binary in source control):
+
+```dockerfile
+## example only - obtain dd-java-agent.jar from Datadog releases and do not commit it to source control
+## ADD dd-java-agent.jar /opt/datadog/dd-java-agent.jar
+ENV JAVA_TOOL_OPTIONS="-javaagent:/opt/datadog/dd-java-agent.jar -Ddd.service=book-orders-service -Ddd.env=local"
+```
+
+You'll also need to provide Datadog settings (API key) and exporter config when running in an environment that can reach Datadog. For local dev you can run the agent with limited features or point it at a local collector.
+
+Checkstyle
+---------
+
+This repo includes a Checkstyle ruleset at `config/checkstyle/checkstyle.xml` and the Maven plugin configured in `pom.xml`. The plugin is currently non-failing by default to avoid breaking builds; if you'd like to enforce rules in CI I can enable failure-on-violation or add a GitHub Actions step to run the check.
+
+Feign & MapStruct
+------------------
+
+Example code was added to demonstrate integration points:
+
+- `src/main/java/com/example/bookorders/client/BookClient.java` — a sample Spring Cloud OpenFeign client.
+- `src/main/java/com/example/bookorders/mapper/OrderMapper.java` — MapStruct mapper (componentModel=spring).
+- `src/main/java/com/example/bookorders/model/OrderDto.java` — DTO used by the mapper example.
+
+These are small examples to help you wire Feign and MapStruct into the project; remove or adapt them as needed.
+
