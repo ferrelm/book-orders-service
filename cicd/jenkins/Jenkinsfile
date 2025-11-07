@@ -1,0 +1,109 @@
+pipeline {
+  agent { label 'linux && docker' }
+  options {
+    timeout(time: 60, unit: 'MINUTES')
+    buildDiscarder(logRotator(numToKeepStr: '50'))
+  }
+
+  environment {
+    // Credential IDs - ensure these are defined in Jenkins Credentials
+    AWS_CREDENTIALS = 'aws_credentials'        // AWS access key/secret or role binding
+    MAVEN_SETTINGS = 'maven_settings'          // Config file credential (settings.xml)
+    MAVEN_REPO_CREDS = 'maven_repo_creds'      // for private maven feed
+    ECR_REGISTRY = 'aws_ecr_registry'         // ECR registry (e.g. 123456789012.dkr.ecr.us-east-1.amazonaws.com)
+    DATADOG_API_KEY = 'datadog_api_key'
+    DOCKER_BUILDKIT = '1'
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        checkout scm
+      }
+    }
+
+    stage('Build & Test') {
+      steps {
+        withCredentials([file(credentialsId: env.MAVEN_SETTINGS, variable: 'MAVEN_SETTINGS_FILE')]) {
+          sh "./cicd/scripts/build-and-test.sh ${MAVEN_SETTINGS_FILE:-settings.xml}"
+        }
+      }
+      post {
+        always { junit 'target/surefire-reports/*.xml' }
+      }
+    }
+
+    stage('Static Analysis') {
+      steps {
+        // Optional Sonar scan - configure SonarQube credentials in Jenkins if used
+        sh 'echo "Skipping Sonar by default. Uncomment and configure sonar scanner if required."'
+      }
+    }
+
+    stage('Build & Push Image') {
+      steps {
+        // Build and push image to ECR
+        withCredentials([
+          usernamePassword(credentialsId: env.MAVEN_REPO_CREDS, usernameVariable: 'MAVEN_USER', passwordVariable: 'MAVEN_PASS'),
+          string(credentialsId: env.DATADOG_API_KEY, variable: 'DD_API_KEY'),
+          [$class: 'AmazonWebServicesCredentialsBinding', credentialsId: env.AWS_CREDENTIALS]
+        ]) {
+          script {
+            // Compose image name and tag
+            def imageTag = "${env.BUILD_NUMBER}-${env.GIT_COMMIT.take(7)}"
+            env.IMAGE = "${env.ECR_REGISTRY}/book-orders-service:${imageTag}"
+            sh "./cicd/scripts/publish-image.sh ${env.IMAGE} ${DD_API_KEY}"
+            stash name: 'image', includes: ''
+          }
+        }
+      }
+    }
+
+    stage('Terraform Apply (infra)') {
+      when { expression { return params.DEPLOY_INFRA ?: true } }
+      steps {
+        // Keep terraform invocation opinionated: use workspaces and varfile per env
+        sh 'echo "Run terraform apply here (configure backend & credentials)."'
+        // Example: sh "terraform -chdir=infra/terraform init && terraform -chdir=infra/terraform apply -auto-approve -var-file=./cicd/variables/${params.TARGET_ENV}.yaml"
+      }
+    }
+
+    stage('Helm Deploy') {
+      steps {
+        // Deploy chart using helm and the appropriate values
+        withCredentials([string(credentialsId: env.AWS_CREDENTIALS, variable: 'AWS_CREDS')]) {
+          sh 'echo "Deploying Helm chart (see cicd/scripts/deploy-helm.sh)"'
+          sh "./cicd/scripts/deploy-helm.sh ${params.TARGET_ENV} ${env.IMAGE}"
+        }
+      }
+    }
+
+    stage('Smoke Tests') {
+      steps {
+        // Simple actuator health check (adjust path if needed)
+        sh "echo 'Running post-deploy health check: curl --fail --silent $${SERVICE_BASE_URL:-http://my-service}:8081/actuator/health' || true"
+      }
+    }
+
+    stage('Promote') {
+      when { expression { return params.PROMOTE ?: false } }
+      steps {
+        input message: "Promote ${params.TARGET_ENV} build to next environment?"
+      }
+    }
+  }
+
+  parameters {
+    string(name: 'TARGET_ENV', defaultValue: 'dev', description: 'Deploy target environment (dev/pre/prod)')
+    booleanParam(name: 'DEPLOY_INFRA', defaultValue: false, description: 'Run terraform apply before helm deploy')
+    booleanParam(name: 'PROMOTE', defaultValue: false, description: 'Require manual approval to promote')
+  }
+
+  post {
+    success { echo 'Pipeline completed successfully' }
+    failure { echo 'Pipeline failed' }
+    always {
+      cleanWs()
+    }
+  }
+}
