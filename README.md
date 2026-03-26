@@ -1,228 +1,268 @@
 # Book Orders Service
-A demo microservice using Java 17, Spring Boot 3, MongoDB, OAuth2 (JWT), OpenAPI, Docker, Helm, and Terraform.
 
-## Run locally
-mvn spring-boot:run
+A demo REST microservice for managing book orders, built with Java 17 and Spring Boot 3.
 
-## Build Docker image
-docker build -t book-orders-service .
-docker run -p 8080:8080 book-orders-service
+## Table of Contents
 
-Access API docs: http://localhost:8080/swagger-ui.html
+- [Tech Stack](#tech-stack)
+- [Prerequisites](#prerequisites)
+- [Project Structure](#project-structure)
+- [Building](#building)
+- [Running Locally](#running-locally)
+- [Docker Compose](#docker-compose)
+- [API Reference](#api-reference)
+- [Authentication](#authentication)
+- [Spring Profiles](#spring-profiles)
+- [Kubernetes](#kubernetes)
+- [Infrastructure](#infrastructure)
+- [Code Quality](#code-quality)
 
-## Deploy to Kubernetes
-helm install book-orders ./helm
+---
 
-## Infrastructure (optional)
-cd terraform && terraform init && terraform apply
+## Tech Stack
 
-## Generating OpenAPI code and building
+| Layer            | Technology                              |
+| ---------------- | --------------------------------------- |
+| Language         | Java 17                                 |
+| Framework        | Spring Boot 3.3, Spring Cloud OpenFeign |
+| Database         | MongoDB 6                               |
+| Security         | Spring OAuth2 Resource Server (JWT)     |
+| API Docs         | OpenAPI 3 / Swagger UI (springdoc)      |
+| Mapping          | MapStruct                               |
+| Scheduling       | ShedLock (MongoDB provider)             |
+| Containerization | Docker, Docker Compose                  |
+| Deployment       | Helm 3                                  |
+| Infrastructure   | Terraform                               |
 
-This project keeps OpenAPI code generation behind a Maven profile. Use the provided Makefile targets to generate sources and build the project.
+---
 
-- Generate OpenAPI sources (writes to target/generated-sources/openapi):
+## Prerequisites
+
+- Java 17+
+- Maven 3.8+
+- Docker & Docker Compose (for containerized runs)
+- `make` (optional, for Makefile targets)
+
+---
+
+## Project Structure
+
+```
+src/main/java/com/example/bookorders/
+├── client/         # Feign HTTP clients (BookClient)
+├── config/         # Security and dev-profile configuration
+├── controller/     # REST controllers (OrderController)
+├── mapper/         # MapStruct mappers
+├── model/          # Domain model and DTOs
+├── repository/     # MongoDB repositories
+└── service/        # Business logic
+src/main/resources/
+├── application.yml           # Base configuration
+├── application-dev.yml       # Dev profile overrides
+└── openapi/book-orders-api.yaml
+```
+
+---
+
+## Building
+
+OpenAPI code generation is behind a dedicated Maven profile. Use the Makefile targets for common tasks:
 
 ```bash
+# Generate OpenAPI sources → target/generated-sources/openapi
 make generate
-```
 
-- Compile locally:
-
-```bash
+# Compile (skip tests)
 make compile
-```
 
-- Build package (JAR):
-
-```bash
+# Package JAR (skip tests)
 make build
+
+# Clean
+make clean
 ```
 
-If you prefer to run maven directly, the equivalent commands are:
+Equivalent Maven commands:
 
 ```bash
 mvn -Popenapi-generate -DskipTests generate-sources
 mvn -DskipTests clean compile
+mvn -DskipTests clean package
 ```
 
-## Docker quick start (compose)
+---
 
-You can start MongoDB and the app together using docker-compose and the Makefile targets included in this repo.
+## Running Locally
 
-- Bring the stack up (build the app image and start services):
+**Option 1 — Maven (requires a running MongoDB on localhost:27017):**
 
 ```bash
+mvn spring-boot:run
+```
+
+**Option 2 — Docker Compose (recommended):** see [Docker Compose](#docker-compose).
+
+Swagger UI is available at <http://localhost:8080/swagger-ui.html> once the app is running.
+
+---
+
+## Docker Compose
+
+The compose file starts both MongoDB and the application. The app defaults to the `dev` Spring profile.
+
+```bash
+# Build and start all services
 make docker-up
-```
 
-This runs `docker-compose up -d --build`. The compose file starts `mongo` and `app`. The app is configured to connect to Mongo at the service hostname `mongo`.
-
-- Tail logs:
-
-```bash
+# Tail logs
 docker-compose logs -f
-```
 
-- Tear down the stack and remove volumes:
+# Wait for the app actuator to report healthy (~30 s timeout)
+make smoke
 
-```bash
+# Tear down and remove volumes
 make docker-down
 ```
 
-Notes:
-- If you already have a container named `mongo` (for example you started one with `docker run --name mongo ...`), stop/remove it before running `make docker-up` or change the port mapping in `docker-compose.yml`.
-- The app will use environment variables set in the compose file to point to Mongo; change them if you need a different DB host or credentials.
-- The app by default validates JWTs using the issuer URI in `application.yml`. For quick local testing you may want a dev profile that disables security (I can add one on request).
-
-Actuator & example curl commands
---------------------------------
-
-When running via `docker-compose` the app is started with the `dev` profile which exposes the actuator `health` and `info` endpoints without requiring authentication.
-
-Override the profile: the compose file uses environment substitution so the profile is configurable without editing the file:
-
-```yaml
-# in docker-compose.yml
-SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
-```
-
-Examples to override at runtime:
+**Override the Spring profile at startup:**
 
 ```bash
-# start compose with a different profile (inline override)
+# Inline environment override
 SPRING_PROFILES_ACTIVE=prod docker-compose up -d --build
 
-# or use the Makefile helper I added:
+# Makefile helper
 make docker-up-profile PROFILE=prod
 ```
 
-Unauthenticated (dev) actuator health:
+> **Note:** If you have an existing container named `mongo`, stop it first or adjust the port mapping in `docker-compose.yml` before running `make docker-up`.
+
+### Actuator health check script
+
+`scripts/check-actuator.sh` brings the compose stack up for a given profile, polls `/actuator/health` until HTTP 200 (up to ~30 s), and then tears the stack down.
 
 ```bash
-# returns HTTP 200 when app is up
-curl -sS -o /dev/null -w "%{http_code}" http://localhost:8080/actuator/health
+# Start, check, then tear down
+./scripts/check-actuator.sh dev
+
+# Start, check, and leave containers running for inspection
+./scripts/check-actuator.sh prod --no-down
+
+# Makefile shortcuts
+make test-actuator-dev
+make test-actuator-prod
 ```
 
-Authenticated API example (when security is enabled):
+---
+
+## API Reference
+
+Base path: `/api/orders`
+
+| Method | Path          | Description        |
+| ------ | ------------- | ------------------ |
+| `GET`  | `/api/orders` | List all orders    |
+| `POST` | `/api/orders` | Create a new order |
+
+**Create order — request body:**
+
+```json
+{
+  "customerName": "Alice",
+  "bookTitle": "1984",
+  "quantity": 1,
+  "status": "NEW"
+}
+```
+
+**Actuator endpoints** (unauthenticated on `dev` profile):
+
+```
+GET /actuator/health
+GET /actuator/info
+```
+
+---
+
+## Authentication
+
+The service is an OAuth2 resource server that validates Bearer JWTs. The issuer URI is configured in `application.yml`:
+
+```yaml
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: https://cognito-idp.<region>.amazonaws.com/<pool>
+```
+
+**Example authenticated request:**
 
 ```bash
-# Replace <TOKEN> with a valid bearer JWT
-curl -sS -H "Authorization: Bearer <TOKEN>" http://localhost:8080/api/orders
+curl -H "Authorization: Bearer <TOKEN>" http://localhost:8080/api/orders
 ```
 
-There is also a Makefile target to wait for a healthy app:
+### Dev-only token
+
+The `dev` profile registers a permissive `JwtDecoder` (see [DevJwtConfig.java](src/main/java/com/example/bookorders/config/DevJwtConfig.java)) that accepts a fixed token so you can test without a real IdP:
 
 ```bash
-make smoke
-```
-
-This will poll the actuator health endpoint for up to ~30s and return success when it becomes available.
-
-Dev-only test token
--------------------
-
-For quick local testing the `dev` profile includes a tiny development JwtDecoder that accepts a fixed token value. When running the app with the `dev` profile you can use the header:
-
-```http
-Authorization: Bearer dev-token
-```
-
-Example calls using the dev token:
-
-```bash
-# List orders (no external IdP required when running with 'dev')
+# List orders
 curl -H "Authorization: Bearer dev-token" http://localhost:8080/api/orders
 
 # Create an order
-curl -X POST -H "Content-Type: application/json" -H "Authorization: Bearer dev-token" \
-	-d '{"customerName":"Alice","bookTitle":"1984","quantity":1,"status":"NEW"}' \
-	http://localhost:8080/api/orders
+curl -X POST \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer dev-token" \
+  -d '{"customerName":"Alice","bookTitle":"1984","quantity":1,"status":"NEW"}' \
+  http://localhost:8080/api/orders
 ```
 
-Security note: `dev-token` is intentionally insecure and only available when the `dev` profile is active (the repo includes a dev-only config class that registers this decoder). Do NOT use this token or enable this behavior in shared/production environments.
+> **Warning:** `dev-token` is intentionally insecure. Never enable the `dev` profile in shared or production environments.
 
-Implementation note: the dev Jwt decoder is implemented in `src/main/java/com/example/bookorders/config/DevJwtConfig.java` — see that file if you want to change the token behavior or claims used for local testing.
+---
 
+## Spring Profiles
 
-Script: scripts/check-actuator.sh
----------------------------------
+| Profile                    | Purpose                                                                   |
+| -------------------------- | ------------------------------------------------------------------------- |
+| `dev` (default in Compose) | Exposes actuator endpoints without auth; enables `dev-token` JWT decoder. |
+| `prod`                     | Full security; actuator endpoints require authentication.                 |
 
-A small helper script is included at `scripts/check-actuator.sh` that automates bringing the compose stack up for a given Spring profile, polling the `\/actuator\/health` endpoint until it returns HTTP 200 (or a timeout is reached), and optionally tearing the stack down.
+---
 
-Key behavior:
+## Kubernetes
 
-- Starts the compose stack with the requested profile (defaults to `dev` if not specified).
-- Polls `http://localhost:8080/actuator/health` for up to ~30s and prints the final HTTP status code.
-- Exits with success (0) when HTTP 200 is observed, or non-zero on timeout / non-200.
-- By default the script will bring the stack down after the check; pass `--no-down` to leave the containers running for manual inspection.
-
-Usage examples:
+Deploy with Helm:
 
 ```bash
-# start, check actuator for dev, then tear down
-./scripts/check-actuator.sh dev
-
-# start, check actuator for prod, and leave containers running (useful for debugging)
-./scripts/check-actuator.sh prod --no-down
-
-# convenience Makefile targets
-make test-actuator-dev    # runs the script for the dev profile
-make test-actuator-prod   # runs the script for the prod profile
+helm install book-orders ./helm
 ```
 
-This script is handy for CI smoke checks or quick local verification that a profile exposes (or protects) the actuator endpoints as expected.
+The chart is located in `helm/`. Adjust `helm/values.yaml` for image tag, replica count, and environment-specific settings.
 
+---
 
-Recommended profiles
---------------------
+## Infrastructure
 
-A couple of profiles are useful while developing and deploying:
-
-- dev — local development. This profile (the default when using the included compose file) exposes the actuator `health` and `info` endpoints so you can quickly check app readiness. The repository provides a small dev security configuration that permits unauthenticated access to those management endpoints while keeping the application's API endpoints protected by the resource-server configuration. Use `dev` for local debugging and fast feedback.
-
-- prod — production. Use this profile for deployed environments. Actuator endpoints should not be exposed unauthenticated in production; full security and production-grade settings (secrets, monitoring, DB connections, etc.) should be used.
-
-How to run with a specific profile
----------------------------------
-
-You can override the profile when starting the compose stack, for example:
+Terraform configuration for provisioning cloud resources is in `infra/terraform/`:
 
 ```bash
-# start compose with prod profile
-SPRING_PROFILES_ACTIVE=prod docker-compose up -d --build
-
-# or use the Makefile helper
-make docker-up-profile PROFILE=prod
+cd infra/terraform
+terraform init
+terraform apply
 ```
 
-Keep `dev` as the default in the compose file to make local development frictionless, but always review what each profile enables before using it in shared or CI environments.
+---
 
-Datadog (optional)
-------------------
+## Code Quality
 
-If you want to enable the Datadog Java agent for local testing or profiling, add the agent to your image and pass the JVM arg when starting the container. Example Dockerfile snippet (do NOT include the agent binary in source control):
+**Checkstyle** rules are defined in `config/checkstyle/checkstyle.xml` and wired into the Maven build. The plugin is configured in report-only mode by default; violations will not fail the build unless enforcement is explicitly enabled.
 
-```dockerfile
-## example only - obtain dd-java-agent.jar from Datadog releases and do not commit it to source control
-## ADD dd-java-agent.jar /opt/datadog/dd-java-agent.jar
-ENV JAVA_TOOL_OPTIONS="-javaagent:/opt/datadog/dd-java-agent.jar -Ddd.service=book-orders-service -Ddd.env=local"
+**CI/CD** pipeline definitions and scripts live under `cicd/`. See [cicd/README.md](cicd/README.md) for details on the Jenkins pipeline, Helm deploy scripts, and SonarQube integration.
+
+**Datadog APM (optional):** To attach the Datadog Java agent, obtain `dd-java-agent.jar` from official Datadog releases (do not commit it to source control) and configure it via `JAVA_TOOL_OPTIONS`:
+
+```bash
+JAVA_TOOL_OPTIONS="-javaagent:/opt/datadog/dd-java-agent.jar -Ddd.service=book-orders-service -Ddd.env=local"
 ```
-
-You'll also need to provide Datadog settings (API key) and exporter config when running in an environment that can reach Datadog. For local dev you can run the agent with limited features or point it at a local collector.
-
-Checkstyle
----------
-
-This repo includes a Checkstyle ruleset at `config/checkstyle/checkstyle.xml` and the Maven plugin configured in `pom.xml`. The plugin is currently non-failing by default to avoid breaking builds; if you'd like to enforce rules in CI I can enable failure-on-violation or add a GitHub Actions step to run the check.
-
-Feign & MapStruct
-------------------
-
-Example code was added to demonstrate integration points:
-
-- `src/main/java/com/example/bookorders/client/BookClient.java` — a sample Spring Cloud OpenFeign client.
-- `src/main/java/com/example/bookorders/mapper/OrderMapper.java` — MapStruct mapper (componentModel=spring).
-- `src/main/java/com/example/bookorders/model/OrderDto.java` — DTO used by the mapper example.
-
-These are small examples to help you wire Feign and MapStruct into the project; remove or adapt them as needed.
-

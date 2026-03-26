@@ -12,3 +12,6 @@
 Thumbs.db
 .env
 settings.xml
+
+# Dumps and archives
+/dumps/
