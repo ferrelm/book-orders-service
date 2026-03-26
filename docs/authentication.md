@@ -2,7 +2,33 @@
 
 ## Overview
 
-The service acts as an **OAuth 2.0 Resource Server** using **JWT (JSON Web Tokens)** for authentication. All endpoints (except actuator endpoints in the `dev` profile) require a valid Bearer token in the `Authorization` header.
+- The service acts as an **OAuth 2.0 Resource Server** using **JWT (JSON Web Tokens)** for authentication. All endpoints (except actuator endpoints in the `dev` profile) require a valid Bearer token in the `Authorization` header.
+
+---
+
+In the OAuth 2.0 framework, there are three distinct roles:
+
+| Role                     | Responsibility                                                                    |
+| ------------------------ | --------------------------------------------------------------------------------- |
+| **Authorization Server** | Issues tokens after verifying the caller's identity (AWS Cognito in this project) |
+| **Resource Server**      | Hosts protected data/APIs; accepts requests only when a valid token is presented  |
+| **Client**               | The application or service making requests on behalf of a user or itself          |
+
+#### How Cognito verifies the caller's identity
+
+It depends on the OAuth 2.0 flow being used:
+
+- **Client Credentials** (machine-to-machine): the client sends its `client_id` and `client_secret` directly to Cognito. Cognito checks these against the app client it has registered in the user pool. There is no human user involved — the credentials are pre-provisioned in Cognito and kept secret by the calling service.
+
+- **Authorization Code** (user-facing apps): the user enters their username and password in the Cognito hosted UI (or a federated identity provider like Google/SAML). Cognito authenticates the user against its user pool (or the federated IdP) and, upon success, issues an authorization code. The client app exchanges that code for tokens. The user's password never touches this service.
+
+In both cases, once Cognito is satisfied with the identity, it mints a signed JWT and returns it to the caller. From that point on, this service trusts that JWT solely based on its cryptographic signature — it never re-contacts Cognito to re-verify identity per request.
+
+**This service is a Resource Server.** It does not issue tokens or authenticate users directly — it trusts tokens that were already issued by the Authorization Server (Cognito) and uses them to decide whether to allow or deny each request.
+
+A caller first obtains a **JWT (JSON Web Token)** from Cognito, then presents it on every request to this service as a Bearer token in the `Authorization` header. The service validates the token's signature, issuer, and expiry locally (using Cognito's public keys) without contacting Cognito on every request.
+
+All endpoints require a valid Bearer token, except actuator endpoints (`/actuator/**`) when running under the `dev` profile.
 
 ## Production / Default Configuration
 
@@ -127,9 +153,12 @@ When a request arrives:
 ```mermaid
 sequenceDiagram
     participant Client
+    participant Cognito as AWS Cognito
     participant Filter as BearerTokenAuthenticationFilter
     participant DevDecoder as DevJwtDecoder\n(dev profile only)
     participant Controller
+
+    Note over Cognito: NOT contacted in dev profile.\nDevJwtDecoder replaces the real decoder.
 
     Client->>Filter: HTTP Request\nAuthorization: Bearer dev-token
     Filter->>Filter: Extract Bearer token from header
@@ -147,6 +176,69 @@ sequenceDiagram
 ```
 
 > **Note on actuator endpoints (dev only):** Requests to `/actuator/**` skip the filter chain authentication check entirely — `DevSecurityConfig` marks them as `permitAll()`. No `Authorization` header is required.
+
+## Obtaining a Token
+
+### Production (AWS Cognito)
+
+This service only validates tokens — it never issues them. Callers must obtain a JWT from Cognito before calling any protected endpoint.
+
+The appropriate OAuth 2.0 flow depends on the caller type:
+
+| Caller type           | Flow                   | Description                                                                        |
+| --------------------- | ---------------------- | ---------------------------------------------------------------------------------- |
+| Backend service / CLI | **Client Credentials** | The client authenticates with its own credentials, no user involved                |
+| User-facing app       | **Authorization Code** | User logs in via the Cognito hosted UI; the app exchanges the auth code for tokens |
+
+#### Client Credentials (machine-to-machine)
+
+```bash
+curl -X POST \
+  https://your-domain.auth.<region>.amazoncognito.com/oauth2/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=client_credentials\
+&client_id=<your-client-id>\
+&client_secret=<your-client-secret>\
+&scope=<your-scope>"
+```
+
+The response contains the `access_token` (a signed JWT), which is then passed to this service:
+
+```bash
+curl -H "Authorization: Bearer <access_token>" \
+  http://localhost:8080/orders
+```
+
+Token lifetime and rotation are managed entirely by Cognito. When the token expires, repeat the request to Cognito to obtain a fresh one.
+
+#### Authorization Code (user-facing apps)
+
+1. Redirect the user to the Cognito hosted UI login page.
+2. After login, Cognito redirects back to your configured `redirect_uri` with a `code` query parameter.
+3. Exchange the code for tokens:
+
+```bash
+curl -X POST \
+  https://your-domain.auth.<region>.amazoncognito.com/oauth2/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=authorization_code\
+&client_id=<your-client-id>\
+&code=<authorization-code>\
+&redirect_uri=<your-redirect-uri>"
+```
+
+Use the returned `access_token` (or `id_token` depending on your configuration) as the Bearer token.
+
+### Development (`dev` profile)
+
+No Cognito interaction is needed. Use the fixed token `dev-token` directly:
+
+```bash
+curl -H "Authorization: Bearer dev-token" \
+  http://localhost:8080/orders
+```
+
+The [Postman collection](../postman/book-orders.postman_collection.json) pre-configures this via the `{{devToken}}` environment variable, which is set to `dev-token` in [postman/book-orders.postman_environment.json](../postman/book-orders.postman_environment.json).
 
 ## Key Files
 
